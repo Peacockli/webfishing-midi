@@ -93,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if should_sing {
                 // Ask above what note to sing along
                 sing_above = Input::with_theme(&theme)
-                    .with_prompt("Minimum note to sing note (40-79) Default:")
+                    .with_prompt("Minimum pitch to sing note (40-79) Default:")
                     .default(60)
                     .interact_text()?;
             }

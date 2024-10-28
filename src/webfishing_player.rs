@@ -561,11 +561,11 @@ impl<'a> WebfishingPlayer<'a> {
             fret_x, fret_y, scale_x, scale_y
         );
 
-        self.set_fret_os_specific(fret_x, fret_y);
+        self.send_fret_input(fret_x, fret_y);
     }
 
     #[cfg(not(feature = "silent_input"))]
-    fn set_fret_os_specific(&mut self, fret_x: i32, fret_y: i32) {
+    fn send_fret_input(&mut self, fret_x: i32, fret_y: i32) {
         self.enigo
             .move_mouse(fret_x, fret_y, Coordinate::Abs)
             .unwrap();
@@ -573,7 +573,7 @@ impl<'a> WebfishingPlayer<'a> {
     }
 
     #[cfg(feature = "silent_input")]
-    fn set_fret_os_specific(&mut self, fret_x: i32, fret_y: i32) {
+    fn send_fret_input(&mut self, fret_x: i32, fret_y: i32) {
         unsafe {
             let root = XDefaultRootWindow(self.display);
             let window_id = self.window.id();
