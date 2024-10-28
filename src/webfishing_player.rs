@@ -35,23 +35,12 @@ use xcap::Window;
 mod silent_input {
     pub use std::ptr;
     pub use x11::xlib::{Display, *};
-    pub use std::os::raw::{c_int, c_uint};
-
-    pub const BUTTON_PRESS: c_int = 4;
-    pub const BUTTON_RELEASE: c_int = 5;
-    pub const BUTTON_PRESS_MARK: c_uint = 1 << 0;
-    pub const BUTTON_RELEASE_MARK: c_uint = 1 << 1;
-    pub const TRUE: c_int = 1;
 }
 
 // Re-export constants when the feature is enabled
 #[cfg(feature = "silent_input")]
 pub use silent_input::{
-    BUTTON_PRESS,
-    BUTTON_RELEASE,
-    BUTTON_PRESS_MARK,
-    BUTTON_RELEASE_MARK,
-    TRUE,
+    True,
     XFlush,
     XEvent,
     XKeyEvent,
@@ -63,6 +52,10 @@ pub use silent_input::{
     KeyRelease,
     KeyPressMask,
     KeyPress,
+    ButtonPressMask,
+    ButtonPress,
+    ButtonReleaseMask,
+    ButtonRelease,
     CurrentTime,
     ptr,
     Display,
@@ -502,7 +495,7 @@ impl<'a> WebfishingPlayer<'a> {
             };
 
             // Send KeyPress event
-            XSendEvent(display, window_id.into(), TRUE, KeyPressMask, &mut event as *mut _ as *mut XEvent);
+            XSendEvent(display, window_id.into(), True, KeyPressMask, &mut event as *mut _ as *mut XEvent);
             XFlush(display);
 
             // NOTE: This sleep is needed for the game to read the input
@@ -514,7 +507,7 @@ impl<'a> WebfishingPlayer<'a> {
             event.type_ = KeyRelease;
 
             // Send KeyRelease event
-            XSendEvent(display, window_id.into(), TRUE, KeyReleaseMask, &mut event as *mut _ as *mut XEvent);
+            XSendEvent(display, window_id.into(), True, KeyReleaseMask, &mut event as *mut _ as *mut XEvent);
             XFlush(display);
         }
     }
@@ -580,7 +573,7 @@ impl<'a> WebfishingPlayer<'a> {
 
             // Create KeyPress event without moving the mouse pointer
             let mut event = XButtonEvent {
-                type_: BUTTON_PRESS,
+                type_: ButtonPress,
                 serial: 0,
                 send_event: 0,
                 display: self.display,
@@ -598,14 +591,14 @@ impl<'a> WebfishingPlayer<'a> {
             };
 
             // Send the button press event
-            XSendEvent(self.display, window_id.into(), TRUE, BUTTON_PRESS_MARK.into(), &mut event as *mut _ as *mut XEvent);
+            XSendEvent(self.display, window_id.into(), True, ButtonPressMask.into(), &mut event as *mut _ as *mut XEvent);
             XFlush(self.display);
 
             // Change the event type to button release
-            event.type_ = BUTTON_RELEASE;
+            event.type_ = ButtonRelease;
 
             // Send the button release event
-            XSendEvent(self.display, window_id.into(), TRUE, BUTTON_RELEASE_MARK.into(), &mut event as *mut _ as *mut XEvent);
+            XSendEvent(self.display, window_id.into(), True, ButtonReleaseMask.into(), &mut event as *mut _ as *mut XEvent);
             XFlush(self.display);
         }
     }
@@ -648,7 +641,7 @@ impl<'a> WebfishingPlayer<'a> {
             };
 
             // Send KeyPress event
-            XSendEvent(display, window_id.into(), TRUE, KeyPressMask, &mut event as *mut _ as *mut XEvent);
+            XSendEvent(display, window_id.into(), True, KeyPressMask, &mut event as *mut _ as *mut XEvent);
             XFlush(display);
 
             // NOTE: This sleep is needed for the game to read the input
@@ -660,7 +653,7 @@ impl<'a> WebfishingPlayer<'a> {
             event.type_ = KeyRelease;
 
             // Send KeyRelease event
-            XSendEvent(display, window_id.into(), TRUE, KeyReleaseMask, &mut event as *mut _ as *mut XEvent);
+            XSendEvent(display, window_id.into(), True, KeyReleaseMask, &mut event as *mut _ as *mut XEvent);
             XFlush(display);
         }
     }
