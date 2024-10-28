@@ -388,6 +388,16 @@ fn get_tracks_selection(
     let tracks_tbl = table.split("\n").collect::<Vec<_>>();
     let tracks = &tracks_tbl[2..];
 
+    // Check if there is only one track and return it directly if so
+    if tracks.len() == 1 {
+        let chosen_track = vec![0];
+        if let Err(err) = insert_tracks_to_db(midi_path, &chosen_track, conn) {
+            error!("Failed to insert tracks to database: {}", err);
+            pause_and_exit(-1);
+        }
+        return Ok(chosen_track);
+    }
+
     let defaults = if let Some(saved_tracks) = saved_tracks {
         let mut defaults = vec![false; tracks.len()];
         for track_index in saved_tracks {
