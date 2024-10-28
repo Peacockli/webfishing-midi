@@ -130,6 +130,7 @@ pub struct WebfishingPlayer<'a> {
     paused: Arc<AtomicBool>,
     song_elapsed_micros: Arc<AtomicU64>,
     _data: Vec<u8>,
+    rshift_pressed: bool,
 
     #[cfg(feature = "silent_input")]
     display: *mut Display,
@@ -154,11 +155,11 @@ impl<'a> WebfishingPlayer<'a> {
         }
 
         #[cfg(feature = "silent_input")]
-        let display: *mut Display; // Declare the variable here
+        let display: *mut Display;
 
         #[cfg(feature = "silent_input")]
         {
-            display = unsafe { XOpenDisplay(ptr::null()) }; // Initialize it here
+            display = unsafe { XOpenDisplay(ptr::null()) };
             if display.is_null() {
                 return Err(Error::new(std::io::ErrorKind::Other, "Failed to open X display"));
             }
@@ -186,6 +187,7 @@ impl<'a> WebfishingPlayer<'a> {
             paused: Arc::new(AtomicBool::new(false)),
             song_elapsed_micros: Arc::new(AtomicU64::new(0)),
             _data: settings._data,
+            rshift_pressed: false,
 
             #[cfg(feature = "silent_input")]
             display,
@@ -293,11 +295,16 @@ impl<'a> WebfishingPlayer<'a> {
         if keys.contains(&Keycode::Escape) {
             return true;
         }
+
         if keys.contains(&Keycode::RShift) {
-            self.toggle_pause();
-            // Add a small delay to prevent multiple toggles
-            sleep(Duration::from_millis(200));
+            if !self.rshift_pressed {
+                self.toggle_pause();
+                self.rshift_pressed = true;
+            }
+        } else {
+            self.rshift_pressed = false;
         }
+
         false
     }
 
