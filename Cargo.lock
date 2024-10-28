@@ -1710,6 +1710,7 @@ dependencies = [
  "rusqlite",
  "simple_logger",
  "tabled",
+ "x11",
  "xcap",
 ]
 

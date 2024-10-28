@@ -83,6 +83,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+            // Ask if the user wants to sing along (bark/meow)
+            let should_sing = Confirm::with_theme(&theme)
+                .with_prompt("Sing along?")
+                .default(false)
+                .interact()?;
+
+            let mut sing_above: u8 = 60;
+            if should_sing {
+                // Ask above what note to sing along
+                sing_above = Input::with_theme(&theme)
+                    .with_prompt("Minimum note to sing note (40-79) Default:")
+                    .default(60)
+                    .interact_text()?;
+            }
+
             // Ask if the user wants to loop the song
             let loop_midi = Confirm::with_theme(&theme)
                 .with_prompt("Loop? (Hold ESC to stop)")
@@ -90,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .interact()?;
 
             // Add the selected song to the queue
-            let mut settings = match PlayerSettings::new(midi_data, loop_midi) {
+            let mut settings = match PlayerSettings::new(midi_data, loop_midi, should_sing, sing_above) {
                 Ok(settings) => settings,
                 Err(e) => {
                     error!("Failed to parse MIDI data: {}", e);

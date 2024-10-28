@@ -15,3 +15,11 @@ indicatif = "0.17.8"
 indicatif-log-bridge = "0.2.3"
 tabled = "0.16.0"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
+
+[features]
+default = []
+silent_input = ["x11"]
+
+[dependencies.x11]
+version = "2.21.0"
+optional = true

@@ -1,9 +1,18 @@
 use device_query::{DeviceQuery, DeviceState, Keycode};
+
+#[cfg(not(feature = "silent_input"))]
 use enigo::{
     Button, Coordinate,
     Direction::{Click, Press, Release},
     Enigo, Key, Keyboard, Mouse, Settings,
 };
+
+#[cfg(feature = "silent_input")]
+use enigo::{
+    Direction::{Click},
+    Enigo, Key, Keyboard, Settings,
+};
+
 use indicatif::{MultiProgress, ProgressBar, ProgressState, ProgressStyle};
 use log::{debug, info, warn};
 use midly::{Format, Smf, TrackEvent, TrackEventKind};
@@ -21,6 +30,43 @@ use std::{
     time::{Duration, Instant},
 };
 use xcap::Window;
+
+#[cfg(feature = "silent_input")]
+mod silent_input {
+    pub use std::ptr;
+    pub use x11::xlib::{Display, *};
+    pub use std::os::raw::{c_int, c_uint};
+
+    pub const BUTTON_PRESS: c_int = 4;
+    pub const BUTTON_RELEASE: c_int = 5;
+    pub const BUTTON_PRESS_MARK: c_uint = 1 << 0;
+    pub const BUTTON_RELEASE_MARK: c_uint = 1 << 1;
+    pub const TRUE: c_int = 1;
+}
+
+// Re-export constants when the feature is enabled
+#[cfg(feature = "silent_input")]
+pub use silent_input::{
+    BUTTON_PRESS,
+    BUTTON_RELEASE,
+    BUTTON_PRESS_MARK,
+    BUTTON_RELEASE_MARK,
+    TRUE,
+    XFlush,
+    XEvent,
+    XKeyEvent,
+    XSendEvent,
+    XButtonEvent,
+    XDefaultRootWindow,
+    XOpenDisplay,
+    KeyReleaseMask,
+    KeyRelease,
+    KeyPressMask,
+    KeyPress,
+    CurrentTime,
+    ptr,
+    Display,
+};
 
 const MIN_NOTE: u8 = 40;
 const MAX_NOTE: u8 = 79;
@@ -49,11 +95,13 @@ pub struct PlayerSettings<'a> {
     _data: Vec<u8>,
     pub smf: Smf<'a>,
     pub loop_midi: bool,
+    pub should_sing: bool,
+    pub sing_above: u8,
     pub tracks: Option<Vec<usize>>,
 }
 
 impl<'a> PlayerSettings<'a> {
-    pub fn new(midi_data: Vec<u8>, loop_midi: bool) -> Result<Self, midly::Error> {
+    pub fn new(midi_data: Vec<u8>, loop_midi: bool, should_sing: bool, sing_above: u8) -> Result<Self, midly::Error> {
         let smf = Smf::parse(&midi_data)?;
         // This is safe because we keep midi_data & smf alive in the struct
         let smf = unsafe { std::mem::transmute::<Smf<'_>, Smf<'a>>(smf) };
@@ -62,6 +110,8 @@ impl<'a> PlayerSettings<'a> {
             _data: midi_data,
             smf,
             loop_midi,
+            should_sing,
+            sing_above,
             tracks: None,
         })
     }
@@ -80,11 +130,16 @@ pub struct WebfishingPlayer<'a> {
     input_sleep_duration: u64,
     loop_midi: bool,
     wait_for_user: bool,
+    should_sing: bool,
+    sing_above: u8,
     tracks: Vec<usize>,
     multi: &'a MultiProgress,
     paused: Arc<AtomicBool>,
     song_elapsed_micros: Arc<AtomicU64>,
     _data: Vec<u8>,
+
+    #[cfg(feature = "silent_input")]
+    display: *mut Display,
 }
 
 struct GuitarPosition {
@@ -105,6 +160,17 @@ impl<'a> WebfishingPlayer<'a> {
             warn!("Format not parallel");
         }
 
+        #[cfg(feature = "silent_input")]
+        let display: *mut Display; // Declare the variable here
+
+        #[cfg(feature = "silent_input")]
+        {
+            display = unsafe { XOpenDisplay(ptr::null()) }; // Initialize it here
+            if display.is_null() {
+                return Err(Error::new(std::io::ErrorKind::Other, "Failed to open X display"));
+            }
+        }
+
         let notes = WebfishingPlayer::get_notes(&smf);
         let shift = WebfishingPlayer::calculate_optimal_shift(&notes);
         let mut player = WebfishingPlayer {
@@ -120,11 +186,16 @@ impl<'a> WebfishingPlayer<'a> {
             input_sleep_duration,
             loop_midi: settings.loop_midi,
             wait_for_user,
+            should_sing: settings.should_sing,
+            sing_above: settings.sing_above,
             tracks: settings.tracks.unwrap_or(Vec::new()),
             multi,
             paused: Arc::new(AtomicBool::new(false)),
             song_elapsed_micros: Arc::new(AtomicU64::new(0)),
             _data: settings._data,
+
+            #[cfg(feature = "silent_input")]
+            display,
         };
 
         // For each 6 strings initialize the cur pos as 0
@@ -398,11 +469,70 @@ impl<'a> WebfishingPlayer<'a> {
         } else {
             warn!("No suitable string found for note {}", note);
         }
+
+        if self.should_sing && note >= self.sing_above {
+            self.sing();
+        }
+    }
+
+    #[cfg(feature = "silent_input")]
+    fn sing(&self) {
+        unsafe {
+            // Get the display and window ID
+            let display = self.display;
+            let window_id = self.window.id();
+
+            // Create KeyPress event
+            let mut event = XKeyEvent {
+                type_: KeyPress,
+                serial: 0,
+                send_event: 0,
+                display,
+                window: window_id.into(),
+                root: XDefaultRootWindow(display),
+                subwindow: 0,
+                x: 0,
+                y: 0,
+                x_root: 0,
+                y_root: 0,
+                keycode: 42, // g
+                state: 0,
+                same_screen: 1,
+                time: CurrentTime,
+            };
+
+            // Send KeyPress event
+            XSendEvent(display, window_id.into(), TRUE, KeyPressMask, &mut event as *mut _ as *mut XEvent);
+            XFlush(display);
+
+            // NOTE: This sleep is needed for the game to read the input
+            // espesially when it is low FPS since it checks input
+            // once per frame
+            sleep(Duration::from_millis(self.input_sleep_duration));
+
+            // Create KeyRelease event
+            event.type_ = KeyRelease;
+
+            // Send KeyRelease event
+            XSendEvent(display, window_id.into(), TRUE, KeyReleaseMask, &mut event as *mut _ as *mut XEvent);
+            XFlush(display);
+        }
+    }
+
+    #[cfg(not(feature = "silent_input"))]
+    fn sing(&mut self) {
+        let key = Key::Unicode('g');
+
+        self.enigo.key(key, Press).unwrap();
+        // NOTE: This sleep is needed for the game to read the input
+        // espesially when it is low FPS since it checks input
+        // once per frame
+        sleep(Duration::from_millis(self.input_sleep_duration));
+        self.enigo.key(key, Release).unwrap();
     }
 
     fn set_fret(&mut self, string: i32, fret: i32) {
         // Don't attempt to change to this position if it's already set
-        // It will just unset it
         if self.cur_string_positions.get(&string).unwrap_or(&-1) == &fret {
             return;
         }
@@ -426,17 +556,116 @@ impl<'a> WebfishingPlayer<'a> {
         let fret_x = self.window.x() + (scaled_left + (string * scaled_string));
         let fret_y = self.window.y() + (scaled_top + (fret * scaled_fret));
 
-        debug!(
+        info!(
             "x: {} y: {} | scale_x {:.3} scale_y {:.3}",
             fret_x, fret_y, scale_x, scale_y
         );
 
+        self.set_fret_os_specific(fret_x, fret_y);
+    }
+
+    #[cfg(not(feature = "silent_input"))]
+    fn set_fret_os_specific(&mut self, fret_x: i32, fret_y: i32) {
         self.enigo
             .move_mouse(fret_x, fret_y, Coordinate::Abs)
             .unwrap();
         self.enigo.button(Button::Left, Click).unwrap();
     }
 
+    #[cfg(feature = "silent_input")]
+    fn set_fret_os_specific(&mut self, fret_x: i32, fret_y: i32) {
+        unsafe {
+            let root = XDefaultRootWindow(self.display);
+            let window_id = self.window.id();
+
+            // Create KeyPress event without moving the mouse pointer
+            let mut event = XButtonEvent {
+                type_: BUTTON_PRESS,
+                serial: 0,
+                send_event: 0,
+                display: self.display,
+                window: window_id.into(),
+                root,
+                subwindow: 0,
+                x: fret_x,
+                y: fret_y,
+                x_root: fret_x,
+                y_root: fret_y,
+                button: 1, // Left button
+                same_screen: 1,
+                state: 0,
+                time: CurrentTime,
+            };
+
+            // Send the button press event
+            XSendEvent(self.display, window_id.into(), TRUE, BUTTON_PRESS_MARK.into(), &mut event as *mut _ as *mut XEvent);
+            XFlush(self.display);
+
+            // Change the event type to button release
+            event.type_ = BUTTON_RELEASE;
+
+            // Send the button release event
+            XSendEvent(self.display, window_id.into(), TRUE, BUTTON_RELEASE_MARK.into(), &mut event as *mut _ as *mut XEvent);
+            XFlush(self.display);
+        }
+    }
+
+    #[cfg(feature = "silent_input")]
+    fn strum_string(&mut self, string: i32) {
+        // Map the string index to the corresponding keycode
+        let keycode = match string {
+            0 => 24, // Keycode for 'q'
+            1 => 25, // Keycode for 'w'
+            2 => 26, // Keycode for 'e'
+            3 => 27, // Keycode for 'r'
+            4 => 28, // Keycode for 't'
+            5 => 29, // Keycode for 'y'
+            _ => return,
+        };
+
+        unsafe {
+            // Get the display and window ID
+            let display = self.display;
+            let window_id = self.window.id();
+
+            // Create KeyPress event
+            let mut event = XKeyEvent {
+                type_: KeyPress,
+                serial: 0,
+                send_event: 0,
+                display,
+                window: window_id.into(),
+                root: XDefaultRootWindow(display),
+                subwindow: 0,
+                x: 0,
+                y: 0,
+                x_root: 0,
+                y_root: 0,
+                keycode: keycode,
+                state: 0,
+                same_screen: 1,
+                time: CurrentTime,
+            };
+
+            // Send KeyPress event
+            XSendEvent(display, window_id.into(), TRUE, KeyPressMask, &mut event as *mut _ as *mut XEvent);
+            XFlush(display);
+
+            // NOTE: This sleep is needed for the game to read the input
+            // espesially when it is low FPS since it checks input
+            // once per frame
+            sleep(Duration::from_millis(self.input_sleep_duration));
+
+            // Create KeyRelease event
+            event.type_ = KeyRelease;
+
+            // Send KeyRelease event
+            XSendEvent(display, window_id.into(), TRUE, KeyReleaseMask, &mut event as *mut _ as *mut XEvent);
+            XFlush(display);
+        }
+    }
+
+    #[cfg(not(feature = "silent_input"))]
     fn strum_string(&mut self, string: i32) {
         let key = match string {
             0 => Key::Unicode('q'),
