@@ -27,7 +27,7 @@ use std::{
         Arc,
     },
     thread::sleep,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use xcap::Window;
 
@@ -92,10 +92,11 @@ pub struct PlayerSettings<'a> {
     pub sing_above: u8,
     pub tracks: Option<Vec<usize>>,
     pub playback_speed: f64,
+    pub start_time: Option<u64>,
 }
 
 impl<'a> PlayerSettings<'a> {
-    pub fn new(midi_data: Vec<u8>, loop_midi: bool, should_sing: bool, sing_above: u8, playback_speed: f64) -> Result<Self, midly::Error> {
+    pub fn new(midi_data: Vec<u8>, loop_midi: bool, should_sing: bool, sing_above: u8, playback_speed: f64, start_time: Option<u64>) -> Result<Self, midly::Error> {
         let smf = Smf::parse(&midi_data)?;
         // This is safe because we keep midi_data & smf alive in the struct
         let smf = unsafe { std::mem::transmute::<Smf<'_>, Smf<'a>>(smf) };
@@ -108,6 +109,7 @@ impl<'a> PlayerSettings<'a> {
             sing_above,
             tracks: None,
             playback_speed,
+            start_time,
         })
     }
 }
@@ -129,6 +131,7 @@ pub struct WebfishingPlayer<'a> {
     sing_above: u8,
     tracks: Vec<usize>,
     playback_speed: f64,
+    start_time: Option<u64>,
     multi: &'a MultiProgress,
     paused: Arc<AtomicBool>,
     song_elapsed_micros: Arc<AtomicU64>,
@@ -187,6 +190,7 @@ impl<'a> WebfishingPlayer<'a> {
             sing_above: settings.sing_above,
             tracks: settings.tracks.unwrap_or(Vec::new()),
             playback_speed: settings.playback_speed,
+            start_time: settings.start_time,
             multi,
             paused: Arc::new(AtomicBool::new(false)),
             song_elapsed_micros: Arc::new(AtomicU64::new(0)),
@@ -325,10 +329,35 @@ impl<'a> WebfishingPlayer<'a> {
         if self.wait_for_user {
             // Attempt to press space in-case the user's OS requires a permission pop-up for input
             self.enigo.key(Key::Space, Click).unwrap();
+
+            #[cfg(feature = "silent_input")]
+            println!("Press backspace to start playing");
+            #[cfg(not(feature = "silent_input"))]
             println!("Tab over to the game and press backspace to start playing");
             loop {
                 if device_state.get_keys().contains(&Keycode::Backspace) {
                     break;
+                }
+            }
+        }
+        else {
+            // Wait to start at a certain timestamp if provided
+            if let Some(start_time) = self.start_time {
+                let current_time = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("Time went backwards")
+                    .as_millis();
+
+                if u128::from(start_time) > current_time {
+                    let wait_duration = Duration::from_millis((start_time as u128 - current_time) as u64);
+                    let wait_seconds = wait_duration.as_secs();
+
+                    #[cfg(feature = "silent_input")]
+                    println!("Starting playback in {} seconds...", wait_seconds);
+                    #[cfg(not(feature = "silent_input"))]
+                    println!("Tab over to the game, starting playback in {} seconds...", wait_seconds);
+
+                    std::thread::sleep(wait_duration);
                 }
             }
         }

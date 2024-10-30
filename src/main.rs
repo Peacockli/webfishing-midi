@@ -13,6 +13,7 @@ use std::{fs, io::stdin, path::Path, path::PathBuf, process::exit};
 use tabled::{builder::Builder, settings::Style};
 use webfishing_player::{PlayerSettings, WebfishingPlayer};
 use xcap::Window;
+use chrono::{Local, NaiveTime, Timelike};
 
 const MIDI_DIR: &str = "./midi";
 const WINDOW_NAMES: [&str; 3] = ["steam_app_3146520", "Fish! (On the WEB!)", "Godot_Engine"];
@@ -83,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let (should_sing, loop_midi, add_another_song, playback_speed) = get_user_options(&theme)?;
+            let (should_sing, loop_midi, add_another_song, playback_speed, start_time) = get_user_options(&theme)?;
 
             let mut sing_above: u8 = 60;
             if should_sing {
@@ -95,7 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Add the selected song to the queue
-            let mut settings = match PlayerSettings::new(midi_data, loop_midi, should_sing, sing_above, playback_speed) {
+            let mut settings = match PlayerSettings::new(midi_data, loop_midi, should_sing, sing_above, playback_speed, start_time) {
                 Ok(settings) => settings,
                 Err(e) => {
                     error!("Failed to parse MIDI data: {}", e);
@@ -116,7 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Play all songs in the queue
         for (index, settings) in song_queue.into_iter().enumerate() {
-            let is_first_song = index == 0;
+            let is_first_song = index == 0 && !settings.start_time.is_some();
 
             let mut player = match WebfishingPlayer::new(
                 settings,
@@ -148,12 +149,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn get_user_options(theme: &ColorfulTheme) -> Result<(bool, bool, bool, f64), dialoguer::Error> {
+fn get_user_options(theme: &ColorfulTheme) -> Result<(bool, bool, bool, f64, Option<u64>), dialoguer::Error> {
     let options = vec![
         "Sing along",
         "Loop the song",
         "Queue another song",
         "Set playback speed",
+        "Set start time",
     ];
 
     let selected_options = MultiSelect::with_theme(theme)
@@ -165,7 +167,9 @@ fn get_user_options(theme: &ColorfulTheme) -> Result<(bool, bool, bool, f64), di
     let loop_midi = selected_options.contains(&1);
     let add_another_song = selected_options.contains(&2);
     let mut playback_speed = 1.0;
+    let mut start_time: Option<u64> = None;
 
+    // Playback speed
     if selected_options.contains(&3) {
         let speed_input = Input::with_theme(theme)
             .with_prompt("Enter playback speed:")
@@ -173,6 +177,39 @@ fn get_user_options(theme: &ColorfulTheme) -> Result<(bool, bool, bool, f64), di
             .interact_text()?;
 
         playback_speed = speed_input.trim().parse().unwrap_or(1.0);
+    }
+
+    // Start time
+    if selected_options.contains(&4) {
+        // Get the next whole minute to use as default
+        let now = Local::now();
+        let next_minute = now + chrono::Duration::seconds(60 - now.second() as i64);
+        let default_time = next_minute.format("%H:%M:%S").to_string();
+        let time_input = Input::with_theme(theme)
+            .with_prompt("Enter start time (HH:MM:SS):")
+            .default(default_time) // Set the default to the next whole minute
+            .interact_text()?;
+
+        if let Ok(naive_time) = NaiveTime::parse_from_str(&time_input, "%H:%M:%S") {
+            let current_date = Local::now().date();
+            let start_datetime = current_date.and_time(naive_time);
+            start_time = Some(start_datetime.expect("idk what to put here but otherwise it doesn't work").timestamp() as u64 * 1000);
+
+            let delay_input = Input::with_theme(theme)
+                .with_prompt("Enter delay in ms to account for latency (Ping to host):")
+                .default("0".to_string())
+                .interact_text()?;
+
+            if let Ok(delay) = delay_input.trim().parse::<u64>() {
+                if let Some(existing_start_time) = start_time {
+                    start_time = Some(existing_start_time + delay);
+                }
+            } else {
+                println!("Invalid delay input. No delay will be added.");
+            }
+        } else {
+            println!("Invalid time format. Please use HH:MM:SS.");
+        }
     }
 
     // Check for conflicting options
@@ -183,13 +220,13 @@ fn get_user_options(theme: &ColorfulTheme) -> Result<(bool, bool, bool, f64), di
             .interact()?;
 
         if confirm {
-            return Ok((should_sing, true, false, playback_speed))
+            return Ok((should_sing, true, false, playback_speed, start_time))
         } else {
             return get_user_options(theme);
         }
     }
 
-    Ok((should_sing, loop_midi, add_another_song, playback_speed))
+    Ok((should_sing, loop_midi, add_another_song, playback_speed, start_time))
 }
 
 fn get_window(name: &str) -> Option<Window> {
