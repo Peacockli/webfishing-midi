@@ -91,10 +91,11 @@ pub struct PlayerSettings<'a> {
     pub should_sing: bool,
     pub sing_above: u8,
     pub tracks: Option<Vec<usize>>,
+    pub playback_speed: f64,
 }
 
 impl<'a> PlayerSettings<'a> {
-    pub fn new(midi_data: Vec<u8>, loop_midi: bool, should_sing: bool, sing_above: u8) -> Result<Self, midly::Error> {
+    pub fn new(midi_data: Vec<u8>, loop_midi: bool, should_sing: bool, sing_above: u8, playback_speed: f64) -> Result<Self, midly::Error> {
         let smf = Smf::parse(&midi_data)?;
         // This is safe because we keep midi_data & smf alive in the struct
         let smf = unsafe { std::mem::transmute::<Smf<'_>, Smf<'a>>(smf) };
@@ -106,6 +107,7 @@ impl<'a> PlayerSettings<'a> {
             should_sing,
             sing_above,
             tracks: None,
+            playback_speed,
         })
     }
 }
@@ -126,6 +128,7 @@ pub struct WebfishingPlayer<'a> {
     should_sing: bool,
     sing_above: u8,
     tracks: Vec<usize>,
+    playback_speed: f64,
     multi: &'a MultiProgress,
     paused: Arc<AtomicBool>,
     song_elapsed_micros: Arc<AtomicU64>,
@@ -183,6 +186,7 @@ impl<'a> WebfishingPlayer<'a> {
             should_sing: settings.should_sing,
             sing_above: settings.sing_above,
             tracks: settings.tracks.unwrap_or(Vec::new()),
+            playback_speed: settings.playback_speed,
             multi,
             paused: Arc::new(AtomicBool::new(false)),
             song_elapsed_micros: Arc::new(AtomicU64::new(0)),
@@ -341,8 +345,10 @@ impl<'a> WebfishingPlayer<'a> {
             let pb = self.multi.add(ProgressBar::new(final_tick));
             let paused = Arc::clone(&self.paused);
             let elapsed = Arc::clone(&self.song_elapsed_micros);
+            let playback_speed = self.playback_speed;
+
             pb.set_style(
-                ProgressStyle::with_template("{paused} [{elapsed}] {wide_bar:.cyan/blue}")
+                ProgressStyle::with_template("{paused} [{elapsed}] {wide_bar:.cyan/blue} Speed: {speed}")
                     .unwrap()
                     .with_key("paused", move |_: &ProgressState, w: &mut dyn Write| {
                         let ch = if paused.load(atomic::Ordering::Relaxed) {
@@ -359,6 +365,9 @@ impl<'a> WebfishingPlayer<'a> {
                         let mins = whole_secs / 60;
                         let secs = whole_secs % 60;
                         write!(w, "{:02}:{:02}", mins, secs).unwrap()
+                    })
+                    .with_key("speed", move |_: &ProgressState, w: &mut dyn Write| {
+                        write!(w, "{:.1}x", playback_speed).unwrap()
                     }),
             );
 
@@ -374,12 +383,12 @@ impl<'a> WebfishingPlayer<'a> {
                     // Sleep for one tick at a time so we can check for escape
                     // and update the progress bar more smoothly
                     for current_tick in last_tick..timed_event.absolute_time {
-                        sleep(Duration::from_micros(self.micros_per_tick));
+                        sleep(Duration::from_micros((self.micros_per_tick as f64 / playback_speed) as u64));
                         pb.set_position(current_tick + 1);
 
                         // Update elapsed
                         let new_elapsed = self.song_elapsed_micros.load(atomic::Ordering::Relaxed)
-                            + self.micros_per_tick;
+                            + (self.micros_per_tick as f64 / playback_speed) as u64; // Adjust for playback speed
                         self.song_elapsed_micros
                             .store(new_elapsed, atomic::Ordering::Relaxed);
 
@@ -391,6 +400,7 @@ impl<'a> WebfishingPlayer<'a> {
                     }
                 }
                 last_tick = timed_event.absolute_time;
+
 
                 // Wait while paused
                 while self.is_paused() {

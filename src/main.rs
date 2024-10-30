@@ -83,11 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            // Ask if the user wants to sing along (bark/meow)
-            let should_sing = Confirm::with_theme(&theme)
-                .with_prompt("Sing along?")
-                .default(false)
-                .interact()?;
+            let (should_sing, loop_midi, add_another_song, playback_speed) = get_user_options(&theme)?;
 
             let mut sing_above: u8 = 60;
             if should_sing {
@@ -98,14 +94,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .interact_text()?;
             }
 
-            // Ask if the user wants to loop the song
-            let loop_midi = Confirm::with_theme(&theme)
-                .with_prompt("Loop? (Hold ESC to stop)")
-                .default(false)
-                .interact()?;
-
             // Add the selected song to the queue
-            let mut settings = match PlayerSettings::new(midi_data, loop_midi, should_sing, sing_above) {
+            let mut settings = match PlayerSettings::new(midi_data, loop_midi, should_sing, sing_above, playback_speed) {
                 Ok(settings) => settings,
                 Err(e) => {
                     error!("Failed to parse MIDI data: {}", e);
@@ -119,17 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             song_queue.push(settings);
 
-            if loop_midi {
-                break; // Exit the selection loop
-            }
-
-            // Ask if the user wants to add another song
-            let add_another_song = Confirm::with_theme(&theme)
-                .with_prompt("Would you like to add another song to the queue?")
-                .default(false)
-                .interact()?;
-
-            if !add_another_song {
+            if loop_midi || !add_another_song {
                 break; // Exit the selection loop
             }
         }
@@ -166,6 +146,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn get_user_options(theme: &ColorfulTheme) -> Result<(bool, bool, bool, f64), dialoguer::Error> {
+    let options = vec![
+        "Sing along",
+        "Loop the song",
+        "Queue another song",
+        "Set playback speed",
+    ];
+
+    let selected_options = MultiSelect::with_theme(theme)
+        .with_prompt("Select your options (use arrow keys and space to select, enter to confirm)")
+        .items(&options)
+        .interact()?;
+
+    let should_sing = selected_options.contains(&0);
+    let loop_midi = selected_options.contains(&1);
+    let add_another_song = selected_options.contains(&2);
+    let mut playback_speed = 1.0;
+
+    if selected_options.contains(&3) {
+        let speed_input = Input::with_theme(theme)
+            .with_prompt("Enter playback speed:")
+            .default("1.0".to_string())
+            .interact_text()?;
+
+        playback_speed = speed_input.trim().parse().unwrap_or(1.0);
+    }
+
+    // Check for conflicting options
+    if loop_midi && add_another_song {
+        let confirm = dialoguer::Confirm::with_theme(theme)
+            .with_prompt("Can't queue another song when looping. Skip queueing another song?")
+            .default(true)
+            .interact()?;
+
+        if confirm {
+            return Ok((should_sing, true, false, playback_speed))
+        } else {
+            return get_user_options(theme);
+        }
+    }
+
+    Ok((should_sing, loop_midi, add_another_song, playback_speed))
 }
 
 fn get_window(name: &str) -> Option<Window> {
